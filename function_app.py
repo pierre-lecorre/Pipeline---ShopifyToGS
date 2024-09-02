@@ -343,21 +343,95 @@ def process_stores():
 
                 # Select only the columns you want to keep
                 required_columns = [
-                    'orders_id', 'orders_cancel_reason', 'orders_cancelled_at', 'orders_estimated_taxes',
-                    'orders_fulfillment_status', 'orders_updated_at', 'orders_customer_verified_email',
-                    'orders_customer_email_marketing_consent_state', 'orders_customer_currency',
-                    'orders_customer_default_address_default', 'orders_shipping_address_first_name',
-                    'orders_shipping_address_address1', 'orders_shipping_address_phone',
-                    'orders_shipping_address_city', 'orders_shipping_address_zip',
-                    'orders_shipping_address_province', 'orders_shipping_address_country',
-                    'orders_shipping_address_last_name', 'orders_shipping_address_address2',
-                    'orders_shipping_address_company', 'orders_shipping_address_name',
-                    'orders_shipping_address_country_code', 'orders_shop_name', 'orders_item_type',
-                    'orders_item_id', 'orders_item_title', 'orders_item_quantity', 'orders_item_price',
-                    'orders_refunds_0_transactions_0_created_at', 'orders_refunds_0_refund_line_items_0_line_item_fulfillment_service',
-                    'customers_email', 'customers_firstName', 'customers_lastName', 'customers_shop_name',
-                    'customers_vat_number', 'customers_shipping_address_id', 'customers_billing_address_id', 'customers_sales_manager'
-                ]
+    # Orders Details
+    'orders_id',
+    'orders_cancel_reason',
+    'orders_cancelled_at',
+    'orders_estimated_taxes',
+    'orders_fulfillment_status',
+    'orders_updated_at',
+    'orders_item_type',
+    'orders_item_id',
+    'orders_item_title',
+    'orders_item_quantity',
+    'orders_item_price',
+
+    # Orders Shipping Address
+    'orders_shipping_address_first_name',
+    'orders_shipping_address_last_name',
+    'orders_shipping_address_address1',
+    'orders_shipping_address_address2',
+    'orders_shipping_address_city',
+    'orders_shipping_address_province',
+    'orders_shipping_address_country',
+    'orders_shipping_address_zip',
+    'orders_shipping_address_phone',
+    'orders_shipping_address_company',
+    'orders_shipping_address_name',
+    'orders_shipping_address_country_code',
+    'orders_shipping_address_province_code',
+    'orders_shipping_address_latitude',
+    'orders_shipping_address_longitude',
+
+    # Orders Billing Address
+    'orders_billing_address_first_name',
+    'orders_billing_address_last_name',
+    'orders_billing_address_address1',
+    'orders_billing_address_address2',
+    'orders_billing_address_city',
+    'orders_billing_address_province',
+    'orders_billing_address_country',
+    'orders_billing_address_zip',
+    'orders_billing_address_phone',
+    'orders_billing_address_company',
+    'orders_billing_address_name',
+    'orders_billing_address_country_code',
+    'orders_billing_address_province_code',
+    'orders_billing_address_latitude',
+    'orders_billing_address_longitude',
+
+    # Orders Customer Default Address
+    'orders_customer_default_address_id',
+    'orders_customer_default_address_customer_id',
+    'orders_customer_default_address_first_name',
+    'orders_customer_default_address_last_name',
+    'orders_customer_default_address_company',
+    'orders_customer_default_address_address1',
+    'orders_customer_default_address_address2',
+    'orders_customer_default_address_city',
+    'orders_customer_default_address_province',
+    'orders_customer_default_address_country',
+    'orders_customer_default_address_zip',
+    'orders_customer_default_address_phone',
+    'orders_customer_default_address_name',
+    'orders_customer_default_address_province_code',
+    'orders_customer_default_address_country_code',
+    'orders_customer_default_address_country_name',
+    'orders_customer_default_address_default',
+
+    # Orders Refunds
+    'orders_refunds_0_transactions_0_created_at',
+    'orders_refunds_0_refund_line_items_0_line_item_fulfillment_service',
+
+    # Customers
+    'customers_email',
+    'customers_firstName',
+    'customers_lastName',
+    'customers_shop_name',
+    'customers_vat_number',
+    'customers_shipping_address_id',
+    'customers_billing_address_id',
+    'customers_sales_manager',
+
+    # Orders Shop
+    'orders_shop_name',
+
+    # Orders Customer
+    'orders_customer_verified_email',
+    'orders_customer_email_marketing_consent_state',
+    'orders_customer_currency',
+]
+
 
                 # Keep only the required columns
                 df_combined = df_combined[required_columns]
