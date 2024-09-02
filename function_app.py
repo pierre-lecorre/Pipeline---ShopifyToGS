@@ -100,23 +100,34 @@ def process_order_data(orders, shop_name):
     
     return processed_orders
 
-# Fetch all customers from a Shopify store
+# Fetch all customers from a Shopify store, including metafields
 def fetch_all_customers_from_shopify(shop_name, access_token, api_version="2024-01"):
     url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}/customers.json"
     headers = {"X-Shopify-Access-Token": access_token}
     customers = []
-    params = {"limit": 250}
-    
+    params = {
+        "limit": 250,
+        "fields": "id,email,first_name,last_name,phone,metafields,created_at,updated_at"  # Specify the fields you want to include
+    }
+
     while True:
         response = requests.get(url, headers=headers, params=params)
         if response.status_code == 200:
             data = response.json()
             customers.extend(data['customers'])
             
+            # Fetch metafields for each customer
+            for customer in customers:
+                customer_id = customer.get('id')
+                metafields_url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}/customers/{customer_id}/metafields.json"
+                metafields_response = requests.get(metafields_url, headers=headers)
+                if metafields_response.status_code == 200:
+                    customer['metafields'] = metafields_response.json().get('metafields', [])
+
             # Check if there's a next page
             link_header = response.headers.get('Link')
             if link_header and 'rel="next"' in link_header:
-                next_page_url = [link.split(';')[0].strip('<>') for link in link_header.split(',') if 'rel="next"' in link_header]
+                next_page_url = [link.split(';')[0].strip('<>') for link in link_header.split(',') if 'rel="next"' in link]
                 if next_page_url:
                     url = next_page_url[0]  # Update URL for the next page
                 else:
@@ -125,7 +136,7 @@ def fetch_all_customers_from_shopify(shop_name, access_token, api_version="2024-
                 break
         else:
             response.raise_for_status()
-    
+
     return customers
 
 def fetch_all_orders_from_shopify(shop_name, access_token, api_version="2024-01"):
