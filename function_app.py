@@ -5,6 +5,8 @@ import requests
 import pandas as pd
 import gspread
 import gspread_dataframe as gd
+import time
+import re
 
 # Load credentials for Shopify and Google Sheets
 def load_credentials():
@@ -15,7 +17,7 @@ def load_credentials():
 
 def flatten_data(y, shop_name):
     out = {}
-    
+
     def flatten(x, name=''):
         if isinstance(x, dict):
             for a in x:
@@ -29,8 +31,25 @@ def flatten_data(y, shop_name):
             out[name[:-1]] = x
     
     flatten(y)
+
+    # Process metafields if they exist
+    metafields = {}
+    for key in range(100):  # Assuming you may have up to 100 metafields; adjust as needed
+        metafield_key = out.get(f'metafields_edges_{key}_node_key')
+        metafield_value = out.get(f'metafields_edges_{key}_node_value')
+        if metafield_key:
+            metafields[metafield_key] = metafield_value
+    
+    # Update out dictionary with metafields and remove old metafield keys
+    out.update(metafields)
+    for key in range(100):  # Adjust the range based on your maximum number of metafields
+        out.pop(f'metafields_edges_{key}_node_key', None)
+        out.pop(f'metafields_edges_{key}_node_value', None)
+
     out['shop_name'] = shop_name  # Add shop_name to the flattened output
     return out
+
+
 
 def process_order_data(orders, shop_name):
     processed_orders = []
@@ -100,43 +119,68 @@ def process_order_data(orders, shop_name):
     
     return processed_orders
 
-# Fetch all customers from a Shopify store, including metafields
 def fetch_all_customers_from_shopify(shop_name, access_token, api_version="2024-01"):
-    url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}/customers.json"
-    headers = {"X-Shopify-Access-Token": access_token}
-    customers = []
-    params = {
-        "limit": 250,
-        "fields": "id,email,first_name,last_name,phone,metafields,created_at,updated_at"  # Specify the fields you want to include
+    url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}/graphql.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
     }
+    
+    # Define the initial GraphQL query to fetch customers and metafields
+    query = '''
+    query {
+      customers(first: 250) {
+        edges {
+          node {
+            id
+            email
+            firstName
+            lastName
+            metafields(first: 100) {
+              edges {
+                node {
+                  namespace
+                  key
+                  value
+                }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+    '''
 
-    while True:
-        response = requests.get(url, headers=headers, params=params)
+    customers = []
+    has_next_page = True
+    end_cursor = None
+    
+    while has_next_page:
+        # Add pagination to the query if necessary
+        paginated_query = query
+        if end_cursor:
+            paginated_query = query.replace('}', f', after: "{end_cursor}"}}')
+        
+        response = requests.post(url, headers=headers, json={'query': paginated_query})
+        
         if response.status_code == 200:
             data = response.json()
-            customers.extend(data['customers'])
+            customer_edges = data['data']['customers']['edges']
+            customers.extend([edge['node'] for edge in customer_edges])
             
-            # Fetch metafields for each customer
-            for customer in customers:
-                customer_id = customer.get('id')
-                metafields_url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}/customers/{customer_id}/metafields.json"
-                metafields_response = requests.get(metafields_url, headers=headers)
-                if metafields_response.status_code == 200:
-                    customer['metafields'] = metafields_response.json().get('metafields', [])
-
-            # Check if there's a next page
-            link_header = response.headers.get('Link')
-            if link_header and 'rel="next"' in link_header:
-                next_page_url = [link.split(';')[0].strip('<>') for link in link_header.split(',') if 'rel="next"' in link]
-                if next_page_url:
-                    url = next_page_url[0]  # Update URL for the next page
-                else:
-                    break
-            else:
-                break
+            # Check pagination
+            page_info = data['data']['customers']['pageInfo']
+            has_next_page = page_info['hasNextPage']
+            end_cursor = page_info.get('endCursor')
+            
+            time.sleep(1)  # Add sleep before making the request to avoid hitting rate limits
         else:
             response.raise_for_status()
-
+    
     return customers
 
 def fetch_all_orders_from_shopify(shop_name, access_token, api_version="2024-01"):
@@ -146,6 +190,7 @@ def fetch_all_orders_from_shopify(shop_name, access_token, api_version="2024-01"
     params = {"limit": 250, "status": "any"}  # Include all order statuses
 
     while True:
+        time.sleep(1)  # Add sleep before making the request
         logging.info(f"Fetching orders from URL: {url}")
         response = requests.get(url, headers=headers, params=params)
         logging.info(f"Response status code: {response.status_code}")
@@ -199,7 +244,7 @@ def upload_to_google_sheets(sheet_name, tab_name, data):
     # Upload data
     gd.set_with_dataframe(worksheet=sheet, dataframe=data, include_index=False, include_column_header=True, resize=True)
 
-# Main function to handle fetching, saving, and uploading for multiple stores
+
 def process_stores():
     try:
         logging.info("Starting process_stores function")
@@ -237,8 +282,16 @@ def process_stores():
 
                 if customers:
                     logging.info(f"Processing {len(customers)} customers for {shop_name}")
-                    flattened_customers = [flatten_data(customer,shop_name) for customer in customers]
+                    flattened_customers = [flatten_data(customer, shop_name) for customer in customers]
                     df_customers = pd.DataFrame(flattened_customers)
+                    
+                    # Ensure 'id' column is present
+                    if 'id' in df_customers.columns:
+                        df_customers.rename(columns={'id': 'customers_id'}, inplace=True)
+                    else:
+                        logging.error(f"'id' column is missing in customer data for {shop_name}")
+                        raise KeyError("'id' column is missing in customer data")
+
                     upload_to_google_sheets(google_sheet_name, tab_customers, df_customers)
                     all_customers.extend(flattened_customers)
                     results.append(f"Flattened customers data for {shop_name} has been saved to Google Sheets tab: {tab_customers}.")
@@ -248,8 +301,16 @@ def process_stores():
 
                 if orders:
                     logging.info(f"Processing {len(orders)} orders for {shop_name}")
-                    processed_orders = process_order_data(orders,shop_name)
+                    processed_orders = process_order_data(orders, shop_name)
                     df_orders = pd.DataFrame(processed_orders)
+                    
+                    # Ensure 'customer_id' column is present
+                    if 'customer_id' in df_orders.columns:
+                        df_orders.rename(columns={'customer_id': 'orders_customer_id'}, inplace=True)
+                    else:
+                        logging.error(f"'customer_id' column is missing in orders data for {shop_name}")
+                        raise KeyError("'customer_id' column is missing in orders data")
+
                     upload_to_google_sheets(google_sheet_name, tab_orders, df_orders)
                     all_orders.extend(processed_orders)
                     results.append(f"Processed orders data for {shop_name} has been saved to Google Sheets tab: {tab_orders}.")
@@ -263,17 +324,50 @@ def process_stores():
         # Convert lists of dictionaries to DataFrames
         if all_customers:
             df_all_customers = pd.DataFrame(all_customers).add_prefix('customers_')
-
+        
         if all_orders:
             df_all_orders = pd.DataFrame(all_orders).add_prefix('orders_')
 
-        # Merge the DataFrames on the customer ID, ensuring all orders are retained and customer details are added
-        if all_customers and all_orders:
-            df_combined = pd.merge(df_all_orders, df_all_customers, left_on='orders_customer_id', right_on='customers_id', how='left')
+        # Debugging: Print column names
+        logging.debug(f"Customer DataFrame columns: {df_all_customers.columns.tolist()}")
+        logging.debug(f"Orders DataFrame columns: {df_all_orders.columns.tolist()}")
 
-            # Upload the merged data to Google Sheets
-            upload_to_google_sheets(google_sheet_name, "Combined_Customers_Orders", df_combined)
-            results.append("Merged customer and orders data has been saved to Google Sheets tab: Combined_Customers_Orders.")
+        # Ensure the merge keys are strings and numeric IDs
+        if all_customers and all_orders:
+            if 'customers_id' in df_all_customers.columns and 'orders_customer_admin_graphql_api_id' in df_all_orders.columns:
+                df_all_customers['customers_id'] = df_all_customers['customers_id'].astype(str)
+                df_all_orders['orders_customer_admin_graphql_api_id'] = df_all_orders['orders_customer_admin_graphql_api_id'].astype(str)
+
+                # Merge the DataFrames on the customer ID, ensuring all orders are retained and customer details are added
+                df_combined = pd.merge(df_all_orders, df_all_customers, left_on='orders_customer_admin_graphql_api_id', right_on='customers_id', how='left')
+
+                # Select only the columns you want to keep
+                required_columns = [
+                    'orders_id', 'orders_cancel_reason', 'orders_cancelled_at', 'orders_estimated_taxes',
+                    'orders_fulfillment_status', 'orders_updated_at', 'orders_customer_verified_email',
+                    'orders_customer_email_marketing_consent_state', 'orders_customer_currency',
+                    'orders_customer_default_address_default', 'orders_shipping_address_first_name',
+                    'orders_shipping_address_address1', 'orders_shipping_address_phone',
+                    'orders_shipping_address_city', 'orders_shipping_address_zip',
+                    'orders_shipping_address_province', 'orders_shipping_address_country',
+                    'orders_shipping_address_last_name', 'orders_shipping_address_address2',
+                    'orders_shipping_address_company', 'orders_shipping_address_name',
+                    'orders_shipping_address_country_code', 'orders_shop_name', 'orders_item_type',
+                    'orders_item_id', 'orders_item_title', 'orders_item_quantity', 'orders_item_price',
+                    'orders_refunds_0_transactions_0_created_at', 'orders_refunds_0_refund_line_items_0_line_item_fulfillment_service',
+                    'customers_email', 'customers_firstName', 'customers_lastName', 'customers_shop_name',
+                    'customers_vat_number', 'customers_shipping_address_id', 'customers_billing_address_id', 'customers_sales_manager'
+                ]
+
+                # Keep only the required columns
+                df_combined = df_combined[required_columns]
+
+                # Upload the merged data to Google Sheets
+                upload_to_google_sheets(google_sheet_name, "Combined_Customers_Orders", df_combined)
+                results.append("Merged customer and orders data has been saved to Google Sheets tab: Combined_Customers_Orders.")
+            else:
+                logging.error("One or both of the required columns are missing for merging")
+                raise KeyError("One or both of the required columns are missing for merging")
 
         # Upload individual datasets to Google Sheets if necessary
         if all_customers:
@@ -289,6 +383,8 @@ def process_stores():
     except Exception as e:
         logging.error(f"Error in process_stores: {str(e)}")
         raise
+
+
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
